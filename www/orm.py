@@ -87,8 +87,8 @@ class ModelMetaclass(type):
         if name == 'Model':
             return type.__new__(cls, name, bases, attrs)
         # 获取table名称，一般就是Model的类的名称
-        tablename = attrs.get('__table__', None) or name    # 前面get失败了就赋值name
-        logging.info('found model:%s (table:%s)' % (name, tablename))
+        tableName = attrs.get('__table__', None) or name    # 前面get失败了就赋值name
+        logging.info('found model:%s (table:%s)' % (name, tableName))
         # 获取所有的Field和主键名
         mappings = dict()       # 保存属性和值的k,v（创建映射字典)
         fields = []             # 保存Model类的属性（域list）
@@ -112,5 +112,41 @@ class ModelMetaclass(type):
             # attrs中对应的属性则需要删除，作者指的是attrs的属性和mappings中的属性发生冲突，具体原因可能需要自己体验下这个错误才知道
             attrs.pop(k)
 
+        # %s占位符全部替换成具体属性名
+        escaped_fields = list(map(lambda f: r"'%s'" % f, fields))
+
+        # ======初始化私有的特别属性======
+        attrs['__mappings__'] = mappings  # 保存属性和列的关系，赋值给特殊类变量__mappings__
+        attrs['__table__'] = tableName
+        attrs['__primary_key__'] = primaryKey
+        attrs['__fields__'] = fields
+
+        # ======构造默认的select,insert,update,delete语句======
+        # 这里据说不用`，在mysql里会报错，待验证
+        # 默认的select语句貌似没怎么被用到，如果通用性不好，可能不如不加，后面就findAll方法用到了
+        attrs['__select__'] = "select '%s',%s from '%s'" % (
+            primaryKey, ','.join(escaped_fields, tableName)
+        )
+        # insert语句前面有3个占位符，所以从第四个%开始应该是（用于替换第一个值的a1，替换第二个值的a2，替换第三个值的a3）
+        # 默认想执行的应该是update tableName set 属性1=?，属性2=?，……where 主键=primary_key
+        # a1是tableName没问题，a2应该是主键的属性，a3则通过过匿名函数结合map将%s=?全部替换成属性名=?
+        # 因此这里的匿名函数就是讲%s这个占位符替换成'属性名'=?
+        attrs['__update__'] = 'update `%s` set %s where `%s`=?' % (tableName,', '.join(
+            map(lambda f: '`%s`=?' % (mappings.get(f).name or f), fields)), primaryKey)
+        attrs['__delete__'] = 'delete from `%s` where `%s`=?' % (tableName, primaryKey)
+        # 第三个占位符有很多问号，为了方便就直接使用了create_ars_string函数来生成num个占位符的string
+        # pdb.set_trace()
+        attrs['__insert__'] = 'insert into `%s` (%s, `%s`) values (%s)' % (tableName, ','.join(
+            escaped_fields), primaryKey, create_args_string(len(escaped_fields) + 1))
+        return type.__new__(cls, name, bases, attrs)
 
 
+def create_args_string(num):        # 在ModelMetaclass的特殊变量中用到
+    # insert插入属性的时候，增加num个数量的占位符'?'
+    L = []
+    for n in range(num):
+        L.append('?')
+    return ','.join(L)
+
+
+class Model(dict, metaclass=ModelMetaclass):
