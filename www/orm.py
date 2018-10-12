@@ -150,3 +150,23 @@ def create_args_string(num):        # 在ModelMetaclass的特殊变量中用到
 
 
 class Model(dict, metaclass=ModelMetaclass):
+    # 继承dict是为了使用方便，例如对象实例user['id']即可轻松通过UserModel去数据库获取到id
+    # 元类自然是为了封装我们之前写的具体的SQL处理函数，从数据库获取数据
+
+    def __init__(self, **kw):
+        # 调用dict的父类__init__方法用于创建Model，super（类名，类对象）
+        super(Model, self).__init__(**kw)
+
+    def __getattr__(self, key):
+        # 调用不存在的属性时返回一些内容
+        try:
+            return self[key]    # 如果存在则正常返回
+        except KeyError:
+            raise AttributeError(r"'Model' object has no attribut '%s'" % key)
+
+    def __setattr__(self, key, value):
+        # 设定Model里面的key-value对象，这里value允许为None
+        self[key] = value
+
+    def getValue(self,key):
+        #
